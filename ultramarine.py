@@ -25,7 +25,7 @@ def capabilities():
     return {"status": "configured" if os.environ.get("PAPERINSTRUMENTS_API_KEY") else "missing_key",
             "disabled": os.environ.get("ULTRAMARINE_DISABLED") == "1",
             "authentication_verified": False, "model": MODEL,
-            "reasoning_efforts": list(EFFORTS), "default_effort": "high",
+            "reasoning_efforts": list(EFFORTS), "default_effort": "max",
             "provider_default_effort": "max", "operations": list(OPERATIONS),
             "output_formats": ["text", "json"], "max_input_bytes": MAX_INPUT_BYTES,
             "max_completion_tokens": MAX_OUTPUT_TOKENS,
@@ -99,8 +99,8 @@ def health():
             "generation_tested": False, "model": MODEL}
 
 
-def run(task, source_text="", operation="summarize", reasoning_effort="high",
-        max_completion_tokens=8192, output_format="text", data_classification="public",
+def run(task, source_text="", operation="summarize", reasoning_effort="max",
+        max_completion_tokens=16384, output_format="text", data_classification="public",
         external_processing_authorized=False):
     if not isinstance(task, str) or not task.strip() or not isinstance(source_text, str):
         return fallback("invalid_input")
@@ -120,7 +120,8 @@ def run(task, source_text="", operation="summarize", reasoning_effort="high",
         "For extraction or summaries, cite short exact source quotations when useful."
     )
     if output_format == "json":
-        system += " Return one valid JSON object, with answer and evidence fields."
+        system += (" Return one valid JSON object matching the schema specified in the task. "
+                   "If the task specifies no schema, use answer and evidence fields.")
     messages = [{"role": "system", "content": system},
                 {"role": "user", "content": json.dumps({"operation": operation, "task": task, "source_text": source_text})}]
     if len(json.dumps(messages, ensure_ascii=False).encode()) > MAX_INPUT_BYTES:
@@ -154,3 +155,4 @@ def run(task, source_text="", operation="summarize", reasoning_effort="high",
                 "evidence_validated": False}
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):
         return fallback("invalid_completion")
+
