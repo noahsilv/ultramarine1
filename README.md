@@ -102,7 +102,10 @@ Text-only Chat Completions are deliberately used here. The provider supports add
 
 ## Local execution now, cloud later
 
-Use **ultramarine_host_step** from a client such as Codex with local execution tools.
+Use **ultramarine_host_step** from any MCP-compatible client with local execution tools.
+The reviewing model and client are interchangeable: no Codex, OpenAI, Anthropic,
+or other host-model SDK is required. The model behind this server remains Ultramarine.
+A locally hosted model can act as reviewer when its client can call MCP and run Python.
 Horizon continues to hold the API key and call the model. No inbound connection,
 local listener, Docker installation or cloud execution server is needed for this mode.
 Clients without execution tools can receive proposals but cannot run them.
