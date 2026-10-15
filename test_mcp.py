@@ -11,7 +11,7 @@ class MCPTests(unittest.TestCase):
             async with Client(mcp) as client:
                 tools = await client.list_tools()
                 self.assertEqual({t.name for t in tools}, {
-                    "ultramarine_run", "ultramarine_status", "ultramarine_models", "ultramarine_health"})
+                    "ultramarine_run", "ultramarine_status", "ultramarine_models", "ultramarine_health", "ultramarine_host_step"})
                 result = await client.call_tool("ultramarine_status", {})
                 self.assertFalse(result.is_error)
         asyncio.run(check())
