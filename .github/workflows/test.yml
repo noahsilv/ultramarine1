@@ -11,3 +11,12 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest -v
       - run: python -m py_compile server.py ultramarine.py
+      - run: docker build -t ultramarine-python:test executor
+      - name: Real sandbox smoke tests
+        env:
+          DOCKER_SMOKE: '1'
+          PAPERINSTRUMENTS_API_KEY: synthetic-secret-not-real
+          EXECUTOR_TOKEN: synthetic-executor-secret-not-real
+        run: |
+          export EXECUTOR_IMAGE="$(docker image inspect ultramarine-python:test --format '{{.Id}}')"
+          python -m unittest test_executor_smoke -v

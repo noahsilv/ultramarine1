@@ -4,19 +4,25 @@ from typing import Literal
 
 from fastmcp import FastMCP
 from ultramarine import capabilities, health, models, run
+from agent import agent_run, executor_config
 
 mcp = FastMCP("Ultramarine", instructions=(
     "Optional evidence and drafting assistant. Check status before use. "
     "Results require host review. On fallback, continue with the host model. "
     "Reasoning effort is low, high, or max, never medium. "
-    "This server does not execute model-generated tools or code."
+    "Use ultramarine_agent for bounded Python execution in a separately configured sandbox. "
+    "It cannot access host files or other connected MCP tools."
 ))
 
 
 @mcp.tool
 def ultramarine_status() -> dict:
     """Read local configuration and supported controls without an API request or charge."""
-    return capabilities()
+    result = capabilities()
+    result["agent_execution_configured"] = bool(executor_config())
+    result["execution_backend_verified"] = False
+    result["tools_executed"] = "python_execute only through ultramarine_agent and a configured executor"
+    return result
 
 
 @mcp.tool
@@ -55,6 +61,34 @@ async def ultramarine_run(
         run, task, source_text, operation, reasoning_effort, max_completion_tokens,
         output_format, data_classification, external_processing_authorized,
     )
+
+
+@mcp.tool
+async def ultramarine_agent(
+    task: str,
+    files: dict[str, str] | None = None,
+    reasoning_effort: Literal["low", "high", "max"] = "high",
+    max_turns: int = 6,
+    max_completion_tokens: int = 4096,
+    max_total_tokens: int = 50000,
+    max_cost_usd: float = 0.05,
+    deadline_seconds: int = 240,
+    data_classification: Literal["public", "synthetic", "private", "internal", "confidential"] = "public",
+    external_processing_authorized: bool = False,
+) -> dict:
+    """Run a bounded model/Python/results loop in a separate offline container.
+
+    files maps simple filenames to base64 bytes (20 files, 2 MiB total).
+    Returns base64 artifacts, final candidate answer, tool exit codes and usage.
+    Data is processed by Paper Instruments and the configured execution service.
+    No filesystem access to this computer or other MCP tools. No internet in code.
+    Host must save/decode artifacts, inspect formulas and visually verify deliverables.
+    Fallback may include partial artifacts; never treat these as complete deliverables.
+    Cost is an estimate at documented rates, not a provider billing guarantee.
+    """
+    return await asyncio.to_thread(agent_run, task, files, reasoning_effort, max_turns,
+        max_completion_tokens, max_total_tokens, max_cost_usd, deadline_seconds,
+        data_classification, external_processing_authorized)
 
 
 # For ASGI hosts. Horizon imports mcp directly and supplies authentication.
