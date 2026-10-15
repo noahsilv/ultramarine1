@@ -40,7 +40,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def request(path, payload=None):
+def request(path, payload=None, timeout=120):
     if os.environ.get("ULTRAMARINE_DISABLED") == "1":
         return fallback("disabled")
     key = os.environ.get("PAPERINSTRUMENTS_API_KEY", "").strip()
@@ -54,7 +54,7 @@ def request(path, payload=None):
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         )
         # Fixed origin, no redirects that could forward authorization to another host.
-        with urllib.request.build_opener(NoRedirect).open(req, timeout=120) as response:
+        with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as response:
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 return fallback("response_too_large")

@@ -22,6 +22,9 @@ Horizon manages remote OAuth. The provider key belongs only in the server enviro
 | `ultramarine_health` | Authenticated GET checks key and model listing; no generation |
 | `ultramarine_models` | Available provider model IDs; only `ultramarine-1-flash` is enabled for execution |
 | `ultramarine_run` | One bounded summarization, extraction, classification, editing, drafting or analysis task |
+| `ultramarine_agent` | Optional multi-turn model/Python loop, file inputs and returned artifacts, using a separate isolated executor |
+
+For real file creation and calculations, see [EXECUTION.md](EXECUTION.md). This requires a separately configured execution host. Existing text tools work without it. The code is reviewable on a branch; do not confuse configuration status with tested execution.
 
 `reasoning_effort` is **low / high / max**, not separate models. `medium` is unsupported and rejected. This wrapper defaults to `high`; the provider defaults to and recommends `max`. Use `low` for simple work, `high` for routine work, and `max` for difficult synthesis, then evaluate quality. These are initial routing heuristics, not measured benchmarks.
 
@@ -44,12 +47,12 @@ Synthetic smoke test:
 
 - `status: candidate` means the host must check the answer, especially numerical claims and citations. Model content cannot override the response envelope.
 - `status: fallback` means the calling assistant should continue using its own model or deterministic tools. This server cannot switch the host model itself.
-- Missing/invalid keys, disabled service, timeouts, malformed output, truncation, unexpected tool calls and provider failures produce sanitized fallback results. No automatic retries or recursive tool loops. `retryable` is a hint, not a command to retry; quotas can require billing intervention.
+- Missing/invalid keys, disabled service, timeouts, malformed output, truncation, unexpected tool calls and provider failures produce sanitized fallback results. No automatic retries. Only `ultramarine_agent` runs the explicitly bounded Python tool loop. `retryable` is a hint, not a command to retry; quotas can require billing intervention.
 - Set `ULTRAMARINE_DISABLED=1` in Horizon to disable all upstream calls. Remove it or set `0` to restore service.
 - Two concurrent upstream requests per process, 120-second socket timeout, 48,000-byte serialized-message cap, and 16,384 output-token ceiling bound individual calls. Reasoning tokens count toward the output ceiling and cost. The byte cap is not a tokenizer or a claim about the model's context window. The socket timeout is not a total wall-clock deadline.
 - This is not an account-wide rate limiter or spend cap. Multiple Horizon workers have independent concurrency limits. Configure provider billing controls and restrict Horizon access.
 - Private/internal/confidential data requires explicit external-processing authorization. The caller is responsible for correct classification and removing secrets; this is not a DLP scanner.
-- No prompt or response logging in this code, no persistent conversation store. Horizon/provider logging and retention are governed by their own settings. No host files, shell, arbitrary URLs, or model-generated tools are executed.
+- No prompt or response logging in this code, no persistent conversation store. Horizon/provider logging and retention are governed by their own settings. No host files, shell or arbitrary URLs are exposed. The agent tool executes generated Python only in the separately configured offline container service.
 - MCP and local API scripts share the same upstream service. Neither fixes a provider outage or invalid key; the host workflow is the actual fallback.
 
 ## Local development
@@ -98,4 +101,4 @@ To roll back, redeploy a prior known-good commit in Horizon or revert the offend
 - https://gofastmcp.com/deployment/prefect-horizon
 - https://gofastmcp.com/deployment/running-server
 
-Text-only Chat Completions are deliberately used here. The provider supports additional image, streaming and function-call features, but this server does not expose them. Tools for summarizing versus extracting are represented by the operation parameter. Add capabilities only with corresponding validation and live tests.
+The single-call tool uses text Chat Completions. The agent tool adds the documented function-call loop. Images and streaming are not exposed. Tools for summarizing versus extracting are represented by the operation parameter. Add capabilities only with corresponding validation and live tests.
