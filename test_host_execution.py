@@ -44,3 +44,19 @@ class HostStepTests(unittest.TestCase):
     def test_private_payload_requires_authorization(self):
         self.assertEqual(host_step("test", data_classification="private")["reason"],
                          "external_processing_not_authorized")
+
+    def test_real_adapter_preserves_python_and_complete_contracts(self):
+        import json
+        for action, code in [("python", "print(1)"), ("complete", "")]:
+            proposal = dict(action=action, code=code, summary="Synthetic", artifacts=[])
+            response = {"status":"ok", "data":{"choices":[{"finish_reason":"stop", "message":{"content":json.dumps(proposal)}}]}}
+            with patch("ultramarine.request", return_value=response) as api:
+                result = host_step("Synthetic test", feedback="Host exit 0", data_classification="synthetic")
+                self.assertEqual(result["status"], "candidate")
+                self.assertEqual(result["answer"], proposal)
+                self.assertFalse(result["code_executed"])
+                payload = api.call_args.args[1]
+                self.assertEqual(payload["reasoning_effort"], "max")
+                self.assertEqual(payload["max_completion_tokens"], 16384)
+                self.assertIn('action: "python" or "complete"', json.loads(payload["messages"][1]["content"])["task"])
+

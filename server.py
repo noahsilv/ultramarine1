@@ -42,16 +42,16 @@ async def ultramarine_run(
     task: str,
     source_text: str = "",
     operation: Literal["summarize", "extract", "classify", "edit", "draft", "analyze"] = "summarize",
-    reasoning_effort: Literal["low", "high", "max"] = "high",
-    max_completion_tokens: int = 8192,
+    reasoning_effort: Literal["low", "high", "max"] = "max",
+    max_completion_tokens: int = 16384,
     output_format: Literal["text", "json"] = "text",
     data_classification: Literal["public", "synthetic", "private", "internal", "confidential"] = "public",
     external_processing_authorized: bool = False,
 ) -> dict:
     """Delegate one bounded task. This sends task and source_text to Paper Instruments and incurs API usage.
 
-    low: simple classification/editing; high: routine extraction/summaries;
-    max: difficult synthesis. These are reasoning settings for the same model.
+    max is the default; low/high are explicit task-specific alternatives.
+    These are reasoning settings for the same model.
     Token limit includes hidden reasoning and answer. JSON mode requires a JSON task.
     For private/internal/confidential data, confirm authorization before setting the flag.
     Caller must review facts, numbers and evidence; fallback means continue with the host.
@@ -68,8 +68,8 @@ async def ultramarine_host_step(
     task: str,
     context: str = "",
     feedback: str = "",
-    reasoning_effort: Literal["low", "high", "max"] = "high",
-    max_completion_tokens: int = 8192,
+    reasoning_effort: Literal["low", "high", "max"] = "max",
+    max_completion_tokens: int = 16384,
     data_classification: Literal["public", "synthetic", "private", "internal", "confidential"] = "public",
     external_processing_authorized: bool = False,
 ) -> dict:
@@ -95,3 +95,4 @@ app = mcp.http_app()
 if __name__ == "__main__":
     # Local stdio avoids accidentally exposing an unauthenticated HTTP listener.
     mcp.run()
+

@@ -32,6 +32,17 @@ class AdapterTests(unittest.TestCase):
                 self.assertEqual(payload["reasoning_effort"], effort)
                 self.assertEqual(payload["max_completion_tokens"], 4096)
 
+    def test_default_controls_and_task_specific_json_schema(self):
+        with patch.object(u, "request", return_value=self.result('{"action":"complete","code":"","summary":"Done","artifacts":[]}')) as api:
+            result = u.run('Return action, code, summary and artifacts.', output_format="json")
+            payload = api.call_args.args[1]
+            self.assertEqual(payload["reasoning_effort"], "max")
+            self.assertEqual(payload["max_completion_tokens"], 16384)
+            self.assertEqual(u.capabilities()["default_effort"], "max")
+            self.assertIn("matching the schema specified in the task", payload["messages"][0]["content"])
+            self.assertNotIn("Return one valid JSON object, with answer and evidence fields", payload["messages"][0]["content"])
+            self.assertEqual(result["answer"]["action"], "complete")
+
     def test_json_cannot_override_envelope(self):
         with patch.object(u, "request", return_value=self.result(json.dumps({"status": "approved", "requires_host_review": False}))):
             result = u.run("task", output_format="json")
@@ -68,3 +79,4 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
