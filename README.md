@@ -99,3 +99,52 @@ To roll back, redeploy a prior known-good commit in Horizon or revert the offend
 - https://gofastmcp.com/deployment/running-server
 
 Text-only Chat Completions are deliberately used here. The provider supports additional image, streaming and function-call features, but this server does not expose them. Tools for summarizing versus extracting are represented by the operation parameter. Add capabilities only with corresponding validation and live tests.
+
+## Local execution now, cloud later
+
+Use **ultramarine_host_step** from any MCP-compatible client with local execution tools.
+The reviewing model and client are interchangeable: no Codex, OpenAI, Anthropic,
+or other host-model SDK is required. The model behind this server remains Ultramarine.
+A locally hosted model can act as reviewer when its client can call MCP and run Python.
+Horizon continues to hold the API key and call the model. No inbound connection,
+local listener, Docker installation or cloud execution server is needed for this mode.
+Clients without execution tools can receive proposals but cannot run them.
+
+1. Create a dedicated task directory and describe the OS, Python packages, input
+   filenames and requested output. Send only necessary content.
+2. Call ultramarine_host_step with task and context. It returns a candidate JSON
+   proposal: action (python/complete), code, summary and artifacts.
+3. Review the proposed code against the task and host permissions. Schema
+   validation is not a security sandbox. Use the client's existing execution
+   controls; do not blindly execute model output or weaken those controls.
+4. Run accepted code locally. Inspect output files and perform the owning
+   workflow's checks, including recalculation/rendering when required.
+5. If corrections are needed, call the tool again with the original task/context
+   and feedback containing the previous code, exit status and sanitized output.
+   Each call is stateless and separately billed. Default to at most six calls;
+   stop on provider/authentication errors or unresolved host validation failures.
+6. Accept completion only after independent host checks. A model complete action
+   is a proposal, never evidence that code ran.
+
+All context and feedback goes to Paper Instruments. Classify the combined payload
+and supply external_processing_authorized only when authorization covers it.
+Never include keys or unnecessary private data. Oversized inputs are rejected.
+Artifacts are filenames only; actual files remain on the execution host.
+
+Example synthetic first call:
+
+```json
+{"task":"Create result.json containing 120 divided by 80 and verify it by reopening.",
+ "context":"Windows; Python standard library; empty task directory; relative paths only.",
+ "data_classification":"synthetic","reasoning_effort":"low"}
+```
+
+Status reports execution_mode=host, server_executes_code=false and
+host_execution_available=null because the remote server cannot probe the caller.
+The existing text tools remain compatible.
+
+For a future cloud worker, retain the same proposal/review/result boundary and
+add an authenticated, isolated executor behind a separate explicit mode.
+There is no cloud executor, job queue or automatic local worker in this release.
+After merging, deploy the new main commit in Horizon and refresh tool discovery
+in the client. A GitHub merge alone does not verify deployment.
