@@ -23,9 +23,9 @@ Horizon manages remote OAuth. The provider key belongs only in the server enviro
 | `ultramarine_models` | Available provider model IDs; only `ultramarine-1-flash` is enabled for execution |
 | `ultramarine_run` | One bounded summarization, extraction, classification, editing, drafting or analysis task |
 
-`reasoning_effort` is **low / high / max**, not separate models. `medium` is unsupported and rejected. This wrapper defaults to `high`; the provider defaults to and recommends `max`. Use `low` for simple work, `high` for routine work, and `max` for difficult synthesis, then evaluate quality. These are initial routing heuristics, not measured benchmarks.
+`reasoning_effort` is **low / high / max**, not separate models. `medium` is unsupported and rejected. The wrapper defaults to `max`; low/high require an explicit task-specific choice. These controls do not establish measured routing quality.
 
-Other run parameters: `task`, `source_text`, `operation`, `max_completion_tokens` (default 8192, local ceiling 16384), `output_format` (`text` or `json`), `data_classification`, and `external_processing_authorized`. JSON mode checks parseability and object shape; it does not validate a custom schema or source quotations. All answers require host review.
+Other run parameters: `task`, `source_text`, `operation`, `max_completion_tokens` (default and local ceiling 16384), `output_format` (`text` or `json`), `data_classification`, and `external_processing_authorized`. JSON mode checks parseability and object shape; it does not validate a custom schema or source quotations. All answers require host review.
 
 Synthetic smoke test:
 
@@ -51,6 +51,41 @@ Synthetic smoke test:
 - Private/internal/confidential data requires explicit external-processing authorization. The caller is responsible for correct classification and removing secrets; this is not a DLP scanner.
 - No prompt or response logging in this code, no persistent conversation store. Horizon/provider logging and retention are governed by their own settings. No host files, shell, arbitrary URLs, or model-generated tools are executed.
 - MCP and local API scripts share the same upstream service. Neither fixes a provider outage or invalid key; the host workflow is the actual fallback.
+
+### Failure diagnostics
+
+`ultramarine_status` reports `diagnostics_version: 1` when this implementation is
+deployed. Check this without a generation call after deployment; a source push
+alone does not prove that the connected server is running it.
+
+Completion responses retain `finish_reason` and allowlisted `usage` on both
+accepted candidates and rejected completions, including invalid JSON and invalid
+host-step proposals. Usage includes prompt/completion/total tokens and, when
+supplied, cached and reasoning token counts. Missing counts remain absent;
+missing finish reason is null, and unrecognized reasons are `other`.
+
+`diagnostics` carries bounded request IDs from response headers, HTTP status,
+transport elapsed milliseconds, response state, answer character count and
+tool-call presence where available. Numeric Retry-After seconds and boolean
+x-should-retry are retained as hints, never automatic retry instructions.
+HTTP-date Retry-After values are not returned. The transport timer ends when the
+provider response is read; it excludes subsequent parsing by the host/client.
+Missing request IDs/status remain null. Provider IDs are diagnostic metadata,
+not authentication or proof of billing.
+
+`incomplete_or_tool_response` remains the rejection reason for compatibility;
+inspect its finish reason and tool-call flag instead of guessing the cause.
+Known socket timeouts return `request_timeout` and record whether the failure
+occurred awaiting headers or reading the body. Other exceptions remain sanitized
+`network_or_client_error`. A `length` finish reason does not distinguish output
+budget exhaustion from a context limit. No failed response is promoted to a
+candidate, and no automatic retry is added.
+
+Diagnostics never return rejected answer text, raw reasoning, tool arguments,
+provider error bodies, arbitrary headers or exception messages. Tests use
+synthetic mocked failures and an in-process MCP client; they make no billable
+provider requests. If a host captures only selected top-level fields, it must
+also preserve `diagnostics`, `usage` and `finish_reason` to retain this evidence.
 
 ## Local development
 
