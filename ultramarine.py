@@ -1,7 +1,9 @@
 """Small, stateless Paper Instruments adapter. No credentials or payload logging."""
 import json
 import os
+import re
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -15,10 +17,49 @@ MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _slots = threading.BoundedSemaphore(2)
 
 
-def fallback(code, retryable=False):
-    return {"status": "fallback", "reason": code, "retryable": retryable,
+def fallback(code, retryable=False, diagnostics=None):
+    result = {"status": "fallback", "reason": code, "retryable": retryable,
             "next_action": "Continue with the host model or deterministic tools.",
             "requires_host_review": True}
+    if diagnostics is not None:
+        result["diagnostics"] = diagnostics
+    return result
+
+
+def safe_request_id(value):
+    """Bound opaque identifiers; never return arbitrary headers or the API key."""
+    key = os.environ.get("PAPERINSTRUMENTS_API_KEY", "").strip()
+    if (isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value)
+            and not (key and key in value)):
+        return value
+    return None
+
+
+def completion_metadata(data):
+    """Only allowlisted scalars/counts, never content, tool arguments or reasoning."""
+    data = data if isinstance(data, dict) else {}
+    choices = data.get("choices")
+    choice = choices[0] if isinstance(choices, list) and choices else {}
+    choice = choice if isinstance(choice, dict) else {}
+    message = choice.get("message")
+    message = message if isinstance(message, dict) else {}
+    finish = choice.get("finish_reason")
+    known = ("stop", "length", "tool_calls", "function_call", "content_filter")
+    finish = finish if isinstance(finish, str) and finish in known else (None if finish is None else "other")
+    usage = data.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    safe_usage = {k: v for k, v in usage.items() if k in (
+        "prompt_tokens", "completion_tokens", "total_tokens") and type(v) is int and v >= 0}
+    for group, field in (("completion_tokens_details", "reasoning_tokens"),
+                         ("prompt_tokens_details", "cached_tokens")):
+        detail = usage.get(group)
+        value = detail.get(field) if isinstance(detail, dict) else None
+        if type(value) is int and value >= 0:
+            safe_usage[group] = {field: value}
+    content = message.get("content")
+    return {"finish_reason": finish, "usage": safe_usage,
+            "tool_calls_present": bool(message.get("tool_calls") or message.get("function_call")),
+            "answer_characters": len(content) if isinstance(content, str) else None}
 
 
 def capabilities():
@@ -32,6 +73,7 @@ def capabilities():
             "provider_output_ceiling": 32768,
             "context_window": "Not guaranteed by the API documentation; local byte cap is conservative.",
             "tools_executed": False, "automatic_retries": 0,
+            "diagnostics_version": 1,
             "concurrent_requests_per_process": 2}
 
 
@@ -48,31 +90,63 @@ def request(path, payload=None):
         return fallback("missing_key")
     if not _slots.acquire(blocking=False):
         return fallback("local_concurrency_limit", True)
+    started = time.monotonic()
+    info = {"upstream_attempted": False, "response_state": "not_sent",
+            "request_id": None, "http_status": None}
+
+    def diagnostics():
+        return {**info, "elapsed_ms": max(0, round((time.monotonic() - started) * 1000))}
+
+    def headers_info(headers):
+        headers = headers or {}
+        info["request_id"] = (safe_request_id(headers.get("x-request-id"))
+                              or safe_request_id(headers.get("request-id")))
+        retry = headers.get("x-should-retry")
+        if retry in ("true", "false"):
+            info["should_retry"] = retry == "true"
+        after = headers.get("retry-after")
+        if isinstance(after, str) and re.fullmatch(r"[0-9]{1,8}", after):
+            info["retry_after_seconds"] = int(after)
+
     try:
         req = urllib.request.Request(
             BASE + path, data=json.dumps(payload).encode() if payload is not None else None,
             headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
         )
         # Fixed origin, no redirects that could forward authorization to another host.
+        info.update(upstream_attempted=True, response_state="awaiting_response")
         with urllib.request.build_opener(NoRedirect).open(req, timeout=120) as response:
+            info.update(response_state="reading_body", http_status=response.status)
+            headers_info(response.headers)
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
-                return fallback("response_too_large")
+                info["response_state"] = "too_large"
+                return fallback("response_too_large", diagnostics=diagnostics())
+            info["response_state"] = "received"
             value = json.loads(raw)
             if not isinstance(value, dict):
-                return fallback("invalid_response")
-            return {"status": "ok", "data": value}
+                info["response_state"] = "invalid_json_object"
+                return fallback("invalid_response", diagnostics=diagnostics())
+            return {"status": "ok", "data": value, "diagnostics": diagnostics()}
     except urllib.error.HTTPError as exc:
+        info.update(response_state="http_error", http_status=exc.code)
+        headers_info(exc.headers)
         codes = {400: "invalid_request", 401: "authentication_failed", 403: "access_denied",
                  404: "model_unavailable", 422: "invalid_request", 429: "rate_or_quota_limit",
                  502: "upstream_failure", 503: "provider_unavailable"}
         return fallback(codes.get(exc.code, "provider_http_error"),
-                        exc.code in (429, 502, 503) and exc.headers.get("x-should-retry") != "false")
+                        exc.code in (429, 502, 503) and info.get("should_retry") is not False,
+                        diagnostics())
     except (ValueError, UnicodeError):
-        return fallback("invalid_response")
-    except Exception:
+        info["response_state"] = "invalid_json"
+        return fallback("invalid_response", diagnostics=diagnostics())
+    except Exception as exc:
         # Do not return exception text: it may include request data or credentials.
-        return fallback("network_or_client_error", True)
+        timed_out = isinstance(exc, TimeoutError) or (
+            isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, TimeoutError))
+        info["failure_phase"] = info["response_state"]
+        info["response_state"] = "timeout" if timed_out else "network_or_client_error"
+        return fallback("request_timeout" if timed_out else "network_or_client_error", True, diagnostics())
     finally:
         _slots.release()
 
@@ -133,26 +207,32 @@ def run(task, source_text="", operation="summarize", reasoning_effort="max",
     result = request("/chat/completions", payload)
     if result["status"] != "ok":
         return result
+    metadata = completion_metadata(result.get("data"))
+    diagnostics = {**result.get("diagnostics", {}),
+                   **{k: v for k, v in metadata.items() if k not in ("usage", "finish_reason")}}
+
+    def completed(value):
+        value.update(model=MODEL, reasoning_effort=reasoning_effort,
+                     finish_reason=metadata["finish_reason"], usage=metadata["usage"],
+                     diagnostics=diagnostics)
+        return value
+
     try:
         data = result["data"]
         choice = data["choices"][0]
         message = choice["message"]
-        if choice.get("finish_reason") != "stop" or message.get("tool_calls"):
-            return fallback("incomplete_or_tool_response")
+        if choice.get("finish_reason") != "stop" or metadata["tool_calls_present"]:
+            return completed(fallback("incomplete_or_tool_response"))
         answer = message["content"]
         if not isinstance(answer, str) or not answer.strip():
-            return fallback("empty_response")
+            return completed(fallback("empty_response"))
         if output_format == "json":
             answer = json.loads(answer)
             if not isinstance(answer, dict):
-                return fallback("invalid_json_object")
-        usage = data.get("usage") or {}
-        safe_usage = {k: v for k, v in usage.items() if k in (
-            "prompt_tokens", "completion_tokens", "total_tokens") and type(v) is int and v >= 0}
-        return {"status": "candidate", "answer": answer, "model": MODEL,
-                "reasoning_effort": reasoning_effort, "usage": safe_usage,
+                return completed(fallback("invalid_json_object"))
+        return completed({"status": "candidate", "answer": answer,
                 "requires_host_review": True,
-                "evidence_validated": False}
+                "evidence_validated": False})
     except (KeyError, IndexError, TypeError, ValueError, AttributeError):
-        return fallback("invalid_completion")
+        return completed(fallback("invalid_completion"))
 

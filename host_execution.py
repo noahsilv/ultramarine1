@@ -37,7 +37,10 @@ def host_step(task, context="", feedback="", reasoning_effort="max",
         or not all(isinstance(x, str) for x in answer["artifacts"])
         or (answer["action"] == "python" and not answer["code"].strip())
         or (answer["action"] == "complete" and answer["code"] != "")):
-        return fallback("invalid_host_proposal")
+        rejected = fallback("invalid_host_proposal")
+        rejected.update({k: result[k] for k in (
+            "model", "reasoning_effort", "finish_reason", "usage", "diagnostics") if k in result})
+        return rejected
     result.update(execution_mode="host", code_executed=False,
                   requires_code_review=True, host_validation_required=True)
     return result
